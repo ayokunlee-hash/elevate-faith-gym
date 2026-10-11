@@ -7,6 +7,9 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Families: one row per parent account.
 -- pin_hash holds only a salted scrypt hash, never the plain PIN.
+-- password_hash holds only a salted scrypt hash for email/password families.
+-- country is a nullable ISO country code captured at sign-up, used only for
+-- aggregate sign-up counts, never tied to a child.
 CREATE TABLE IF NOT EXISTS families (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   parent_name TEXT NOT NULL DEFAULT '',
@@ -14,6 +17,8 @@ CREATE TABLE IF NOT EXISTS families (
   auth_provider TEXT CHECK (auth_provider IN ('google', 'email')),
   google_sub TEXT UNIQUE,
   pin_hash TEXT,
+  password_hash TEXT,
+  country TEXT,
   setup_completed BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

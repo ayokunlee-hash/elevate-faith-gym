@@ -8,9 +8,12 @@ magic links sent through Resend, and sessions live in the database.
 ## What is in this folder
 
 - `api/auth/` - the serverless endpoints (Google start and callback,
-  email magic-link start and verify, current user, logout, PIN save,
-  setup completion)
-- `lib/` - shared helpers (database pool, sessions, PIN hashing, tokens)
+  email magic-link start and verify, email password sign-up and sign-in,
+  current user, logout, PIN save, setup completion)
+- `api/admin/stats.js` - real aggregate figures for the admin dashboard
+  (requires a signed-in parent session)
+- `lib/` - shared helpers (database pool, sessions, PIN hashing,
+  password hashing, tokens)
 - `schema.sql` - the full database schema, run once
 - `frontend-snippet.js` - the JavaScript to paste into the existing
   `index.html`, just before `</body>`
@@ -56,6 +59,21 @@ the owner can attach paid or free storage integrations to it.
 4. Open the Neon dashboard, go to the SQL editor, paste the entire
    contents of `schema.sql`, and run it. This creates all tables once.
 
+## Migration for an existing database
+
+If you already ran the first version of `schema.sql`, run this one
+statement in the Neon SQL editor to add the two new family columns.
+It is safe to run more than once.
+
+```sql
+ALTER TABLE families ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE families ADD COLUMN IF NOT EXISTS country TEXT;
+```
+
+`password_hash` stores only a salted scrypt hash for families that sign
+up with an email and password. `country` is an optional ISO country
+code used only for aggregate sign-up counts on the admin dashboard.
+
 ## Step 2: create the Google OAuth client (needs the account owner)
 
 Why the owner: Google ties OAuth credentials to a Google identity. The
@@ -97,7 +115,9 @@ that person can consent on behalf of the app.
 2. Vercel builds and deploys automatically.
 3. Open the live URL and test: sign up with Google, confirm the parent
    name is pre-filled and editable, finish setup, and confirm the app
-   opens. Then test the email magic link the same way.
+   opens. Then test the email magic link the same way, and test email
+   sign-up and sign-in with a password (try a short password and a
+   duplicate email to confirm the 400 and 409 responses).
 
 ## How sign-in works, in plain language
 
@@ -107,6 +127,19 @@ that person can consent on behalf of the app.
   cannot read.
 - Email: the parent enters an email, the server emails a one-time link
   that expires in 15 minutes, and tapping it signs them in the same way.
+  Parents can also sign up and sign in with an email and a password of
+  at least 8 characters: `POST /api/auth/email-signup` takes
+  `{ email, password, parentName }` and returns 409 if the email is
+  already registered; `POST /api/auth/email-signin` takes
+  `{ email, password }` and returns 401 without saying whether the
+  address exists. Passwords are stored only as salted scrypt hashes.
+- Admin stats: `GET /api/admin/stats` returns real aggregate figures
+  from the database (family and kid counts, sign-ups today, active kids
+  over 7 days, pending and approved coins, points issued and spent,
+  verses memorized, queued redemptions, sign-ups by country, activity
+  by day for the last 14 days, and week-by-week drop-off). It requires
+  a signed-in parent session and returns 401 otherwise. It never
+  returns children's names or any other PII, only counts.
 - The 4-digit parent PIN is stored only as a salted hash. The plain PIN
   never touches the database or the logs.
 - Children's names are never written to logs anywhere in this kit.
