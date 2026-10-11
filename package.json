@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "pg": "^8.13.0",
+    "resend": "^4.0.0"
+  },
+  "description": "Authentication backend for Elevate Faith Gym: Vercel serverless functions plus Neon Postgres",
+  "engines": {
+    "node": ">=18"
+  },
+  "name": "efg-auth-kit",
+  "private": true,
+  "version": "1.0.0"
+}
