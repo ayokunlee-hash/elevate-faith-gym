@@ -62,11 +62,11 @@ module.exports = async (req, res) => {
         const result = await resend.emails.send({
           from: process.env.EMAIL_FROM || 'onboarding@resend.dev',
           to: email,
-          subject: 'Sign in to Elevate Faith Gym',
+          subject: 'Sign in to Elevate Faith Skills',
           html:
-            '<p>Tap the link below to sign in to Elevate Faith Gym. ' +
+            '<p>Tap the link below to sign in to Elevate Faith Skills. ' +
             'It expires in 15 minutes and can only be used once.</p>' +
-            `<p><a href="${link}">Sign in to Elevate Faith Gym</a></p>` +
+            `<p><a href="${link}">Sign in to Elevate Faith Skills</a></p>` +
             '<p>If you did not ask for this email, you can safely ignore it.</p>',
         });
         // Resend resolves with { data, error } on API-level failures

@@ -12,9 +12,13 @@ magic links sent through Resend, and sessions live in the database.
   current user, logout, PIN save, setup completion)
 - `api/admin/stats.js` - real aggregate figures for the admin dashboard
   (requires a signed-in parent session)
+- `api/cron/` - scheduled parent notification emails (approval reminders
+  and the weekly digest, protected by `CRON_SECRET`)
+- `vercel.json` - the cron schedules Vercel runs automatically
 - `lib/` - shared helpers (database pool, sessions, PIN hashing,
-  password hashing, tokens)
+  password hashing, tokens, email templates)
 - `schema.sql` - the full database schema, run once
+- `specs/` - approved build specs not yet implemented (guest carry-over)
 - `frontend-snippet.js` - the JavaScript to paste into the existing
   `index.html`, just before `</body>`
 - `package.json` - the only two dependencies: `pg` and `resend`
@@ -44,6 +48,7 @@ Environment Variables. Add each one for the Production environment.
 | `SESSION_SECRET` | A long random string used to sign session cookies. Generate with: `openssl rand -hex 32` | You create it |
 | `RESEND_API_KEY` | API key for sending magic-link emails | Resend dashboard |
 | `EMAIL_FROM` | Optional. The address magic links are sent from. Defaults to `onboarding@resend.dev`. For production, verify your own domain in Resend and set it here. | Resend dashboard |
+| `CRON_SECRET` | A long random string that protects the scheduled notification endpoints. Generate with: `openssl rand -hex 32`. Vercel cron sends it automatically as a bearer token; the endpoints reject any request without it. | You create it |
 
 After adding or changing variables, redeploy the project so they take effect.
 
@@ -68,11 +73,58 @@ It is safe to run more than once.
 ```sql
 ALTER TABLE families ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE families ADD COLUMN IF NOT EXISTS country TEXT;
+
+CREATE TABLE IF NOT EXISTS notification_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_id UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  kid_id UUID REFERENCES kids(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('approval_reminder', 'weekly_digest')),
+  ref_id TEXT,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_notification_log_family ON notification_log(family_id);
+CREATE INDEX IF NOT EXISTS idx_notification_log_dedupe ON notification_log(type, ref_id);
+
+CREATE TABLE IF NOT EXISTS pin_reset_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_id UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pin_reset_tokens_family ON pin_reset_tokens(family_id);
 ```
 
 `password_hash` stores only a salted scrypt hash for families that sign
 up with an email and password. `country` is an optional ISO country
 code used only for aggregate sign-up counts on the admin dashboard.
+`notification_log` records every parent notification email so nothing is
+ever sent twice: `type` is `approval_reminder` (with `ref_id` set to the
+redemption or coin row that triggered it) or `weekly_digest` (with
+`ref_id` set to the Monday date of the week). `pin_reset_tokens` holds
+single-use, 30-minute PIN reset tokens (only SHA-256 hashes are stored);
+each row is marked used when the new PIN is set.
+
+## PIN reset for signed-in parents (email link)
+
+For Google and email families, "Forgot PIN?" no longer signs the parent
+out. Instead:
+
+1. The app calls `POST /api/auth/pin-reset-request` (session required).
+   The server creates a single-use token and emails a reset link to the
+   parent's account email via Resend.
+2. The parent clicks the link, which hits
+   `GET /api/auth/pin-reset-start?token=...`. A valid token redirects to
+   `/#setup?pinResetToken=...` (setup page in PIN-reset mode). Expired or
+   used tokens redirect to `?auth=pinreset_expired#setup`.
+3. On the setup page the parent enters a new 4-digit PIN twice. The app
+   calls `POST /api/auth/pin-reset-confirm` with `{ token, pin }`, which
+   stores only the scrypt hash and marks the token used.
+
+This requires `RESEND_API_KEY`, `EMAIL_FROM`, and `APP_URL` in Vercel.
+Guest families keep the local flow: "Forgot PIN?" clears the stored PIN
+and the parent sets a new one (typed twice) on the setup page.
 
 ## Step 2: create the Google OAuth client (needs the account owner)
 
@@ -143,6 +195,47 @@ that person can consent on behalf of the app.
 - The 4-digit parent PIN is stored only as a salted hash. The plain PIN
   never touches the database or the logs.
 - Children's names are never written to logs anywhere in this kit.
+
+## Parent notification emails
+
+Two scheduled endpoints send transactional account emails to parents,
+as disclosed in the app's Terms. The templates live in
+`lib/email-templates.js` and return both a plain-text and an HTML
+version of each email.
+
+- `GET /api/cron/approval-reminder` - runs daily. Finds gift
+  redemptions queued for over 24 hours and coins pending approval for
+  over 48 hours, groups them by family, and sends ONE email per parent
+  listing everything waiting, with a link back to Parent's Corner.
+  An item is never emailed about twice: each one is recorded in
+  `notification_log` the moment its email goes out.
+- `GET /api/cron/weekly-digest` - runs Monday mornings. Builds a
+  per-kid summary for the last 7 days (days trained, coins earned,
+  quiz points earned, verses memorized) from `activity_log`,
+  `coin_ledger`, `point_ledger`, and `verse_vault`, and emails it to
+  the parent. Families with no activity that week are skipped, and
+  each family gets at most one digest per week (tracked in
+  `notification_log`).
+
+Both endpoints require the `CRON_SECRET` bearer token and return 401
+without it, so they cannot be triggered by outsiders.
+
+How Vercel runs them: the schedules live in `vercel.json` at the
+project root. The approval reminder runs daily at 9:00 UTC
+(`0 9 * * *`) and the digest runs Mondays at 9:00 UTC (`0 9 * * 1`).
+When `CRON_SECRET` is set as an environment variable, Vercel
+automatically attaches it as the `Authorization: Bearer` header on
+every cron invocation, so there is nothing else to configure. Make
+sure `vercel.json` is committed at the project root next to `api/`.
+
+To test an endpoint by hand, call it with curl and the secret:
+
+```
+curl -H "Authorization: Bearer YOUR_CRON_SECRET" \
+  https://your-app.vercel.app/api/cron/approval-reminder
+```
+
+It returns `{ ok: true, sent: N }` with how many parents were emailed.
 
 ## Hardening checklist (recommended before launch)
 

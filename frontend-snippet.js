@@ -1,5 +1,5 @@
 /* =====================================================================
-   Elevate Faith Gym: real auth wiring (production build)
+   Elevate Faith Skills: real auth wiring (production build)
    ---------------------------------------------------------------------
    Paste this just before </body> in index.html.
 
