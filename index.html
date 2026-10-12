@@ -655,7 +655,7 @@
   function makeChild(name,rewards,avatarId,skin){return{name:name,avatarId:avatarId||'',skin:skin||'brown',leaderboardJoined:false,leaderboardName:'',leaderboardRank:null,lastLeaderboardRank:null,confirmed:0,pointsEarned:0,pending:0,coins:0,pendingCoins:0,weeks:weeks.map(function(_,i){return weekState(i)}),rewards:(rewards||[]).map(function(r){return{price:r.price,gift:r.gift}}),rapidRewards:[],queue:[],redemptions:[],notifications:[],notificationSeq:0}}
   var journeyStart=new Date();journeyStart.setHours(0,0,0,0);
   var state={children:[makeChild('Zion',[])],active:0,activeWeek:0,activeDay:0,timerId:null,videoWatchId:null,parentPin:'',pinAction:null,previewMode:false,soundOn:true,audioCtx:null};
-  function readPinResetToken(){var hash=location.hash.replace(/^#/,'').replace(/^\?/,'');return new URLSearchParams(hash).get('pinResetToken')||''}
+  function readPinResetToken(){var queryToken=new URLSearchParams(location.search).get('pinResetToken');if(queryToken)return queryToken;var hash=location.hash.replace(/^#/,'');if(!hash)return'';var queryIndex=hash.indexOf('?');var hashQuery=queryIndex>=0?hash.slice(queryIndex+1):hash.replace(/^\?/,'');return new URLSearchParams(hashQuery).get('pinResetToken')||''}
   var pinResetToken=readPinResetToken(),pinResetPending=!!pinResetToken;
   var authenticatedFamily=null,emailAccountMode='signin',guestPinReset=false;
   var ADMIN_EMAIL='ayokunlee@gmail.com',ADMIN_AUTH_MARKER='elevate-faith-skills-admin-google';
