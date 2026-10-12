@@ -9,12 +9,14 @@ magic links sent through Resend, and sessions live in the database.
 
 - `api/auth/` - the serverless endpoints (Google start and callback,
   email magic-link start and verify, email password sign-up and sign-in,
-  current user, logout, PIN save, setup completion)
+  current user, logout, PIN reset, setup and PIN save)
 - `api/admin/stats.js` - real aggregate figures for the admin dashboard
   (requires a signed-in parent session)
-- `api/cron/` - scheduled parent notification emails (approval reminders
-  and the weekly digest, protected by `CRON_SECRET`)
-- `vercel.json` - the cron schedules Vercel runs automatically
+- `api/cron/notify.js` - the daily parent notification job (approval
+  reminders every run, weekly digest on Mondays, protected by
+  `CRON_SECRET`)
+- `vercel.json` - the cron schedule Vercel runs automatically, plus
+  rewrites that keep the previous endpoint URLs working
 - `lib/` - shared helpers (database pool, sessions, PIN hashing,
   password hashing, tokens, email templates)
 - `schema.sql` - the full database schema, run once
@@ -109,18 +111,21 @@ each row is marked used when the new PIN is set.
 ## PIN reset for signed-in parents (email link)
 
 For Google and email families, "Forgot PIN?" no longer signs the parent
-out. Instead:
+out. Instead, the single endpoint `POST /api/auth/pin-reset` handles all
+three steps (the old `/api/auth/pin-reset-request`, `/api/auth/pin-reset-start`
+and `/api/auth/pin-reset-confirm` URLs keep working through rewrites in
+`vercel.json`):
 
-1. The app calls `POST /api/auth/pin-reset-request` (session required).
-   The server creates a single-use token and emails a reset link to the
-   parent's account email via Resend.
+1. The app calls `POST /api/auth/pin-reset` with no token (session
+   required). The server creates a single-use token and emails a reset
+   link to the parent's account email via Resend.
 2. The parent clicks the link, which hits
-   `GET /api/auth/pin-reset-start?token=...`. A valid token redirects to
+   `GET /api/auth/pin-reset?token=...`. A valid token redirects to
    `/#setup?pinResetToken=...` (setup page in PIN-reset mode). Expired or
    used tokens redirect to `?auth=pinreset_expired#setup`.
 3. On the setup page the parent enters a new 4-digit PIN twice. The app
-   calls `POST /api/auth/pin-reset-confirm` with `{ token, pin }`, which
-   stores only the scrypt hash and marks the token used.
+   calls `POST /api/auth/pin-reset` with `{ token, pin }`, which stores
+   only the scrypt hash and marks the token used.
 
 This requires `RESEND_API_KEY`, `EMAIL_FROM`, and `APP_URL` in Vercel.
 Guest families keep the local flow: "Forgot PIN?" clears the stored PIN
@@ -198,32 +203,39 @@ that person can consent on behalf of the app.
 
 ## Parent notification emails
 
-Two scheduled endpoints send transactional account emails to parents,
-as disclosed in the app's Terms. The templates live in
+Two scheduled jobs send transactional account emails to parents,
+as disclosed in the app's Terms. Both live in the single endpoint
+`GET /api/cron/notify`, which Vercel runs daily at 9:00 UTC
+(`0 9 * * *` in `vercel.json`). The templates live in
 `lib/email-templates.js` and return both a plain-text and an HTML
 version of each email.
 
-- `GET /api/cron/approval-reminder` - runs daily. Finds gift
+- Approval reminders (every run): finds gift
   redemptions queued for over 24 hours and coins pending approval for
   over 48 hours, groups them by family, and sends ONE email per parent
   listing everything waiting, with a link back to Parent's Corner.
   An item is never emailed about twice: each one is recorded in
   `notification_log` the moment its email goes out.
-- `GET /api/cron/weekly-digest` - runs Monday mornings. Builds a
-  per-kid summary for the last 7 days (days trained, coins earned,
+- Weekly digest (Mondays only): builds a
+  per-kid summary for the last 7 days (days practiced, coins earned,
   quiz points earned, verses memorized) from `activity_log`,
   `coin_ledger`, `point_ledger`, and `verse_vault`, and emails it to
   the parent. Families with no activity that week are skipped, and
   each family gets at most one digest per week (tracked in
   `notification_log`).
 
-Both endpoints require the `CRON_SECRET` bearer token and return 401
-without it, so they cannot be triggered by outsiders.
+The endpoint requires the `CRON_SECRET` bearer token and returns 401
+without it, so it cannot be triggered by outsiders.
 
-How Vercel runs them: the schedules live in `vercel.json` at the
-project root. The approval reminder runs daily at 9:00 UTC
-(`0 9 * * *`) and the digest runs Mondays at 9:00 UTC (`0 9 * * 1`).
-When `CRON_SECRET` is set as an environment variable, Vercel
+The jobs were merged into one endpoint so the project stays within the
+Vercel Hobby plan's limit of 12 serverless functions per deployment.
+For the same reason, `/api/auth/pin-reset` handles the whole PIN-reset
+flow and `/api/auth/setup` handles both PIN saving and setup
+completion; the previous individual URLs keep working through the
+`rewrites` in `vercel.json`, so the app's fetch calls did not change.
+
+How Vercel runs it: the schedule lives in `vercel.json` at the
+project root. When `CRON_SECRET` is set as an environment variable, Vercel
 automatically attaches it as the `Authorization: Bearer` header on
 every cron invocation, so there is nothing else to configure. Make
 sure `vercel.json` is committed at the project root next to `api/`.
@@ -232,10 +244,10 @@ To test an endpoint by hand, call it with curl and the secret:
 
 ```
 curl -H "Authorization: Bearer YOUR_CRON_SECRET" \
-  https://your-app.vercel.app/api/cron/approval-reminder
+  https://your-app.vercel.app/api/cron/notify
 ```
 
-It returns `{ ok: true, sent: N }` with how many parents were emailed.
+It returns `{ ok: true, reminders: {...}, digest: {...} }` with how many parents were emailed.
 
 ## Hardening checklist (recommended before launch)
 
