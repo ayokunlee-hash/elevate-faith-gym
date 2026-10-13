@@ -40,6 +40,10 @@ async function loadProgress(pool, familyId) {
       'SELECT series, week, day, activity_type, minutes_or_value, completed_at FROM activity_log WHERE kid_id = $1 ORDER BY completed_at',
       [k.id]
     );
+    const vaultRes = await pool.query(
+      'SELECT reference, text, memorized_at FROM verse_vault WHERE kid_id = $1 ORDER BY memorized_at',
+      [k.id]
+    );
     kids.push({
       name: k.name,
       leaderboardNickname: k.leaderboard_nickname,
@@ -64,6 +68,11 @@ async function loadProgress(pool, familyId) {
         activityType: r.activity_type,
         minutesOrValue: r.minutes_or_value,
         completedAt: r.completed_at,
+      })),
+      verseVault: vaultRes.rows.map((r) => ({
+        reference: r.reference,
+        text: r.text,
+        memorizedAt: r.memorized_at,
       })),
     });
   }
@@ -132,6 +141,19 @@ async function saveProgress(pool, familyId, progress) {
             String(a.activityType || ''),
             a.minutesOrValue != null ? parseInt(a.minutesOrValue, 10) : null,
             a.completedAt ? new Date(a.completedAt) : new Date(),
+          ]
+        );
+      }
+      for (const v of kid.verseVault || []) {
+        const ref = String(v.reference || '').trim();
+        if (!ref) continue;
+        await client.query(
+          'INSERT INTO verse_vault (kid_id, reference, text, memorized_at) VALUES ($1, $2, $3, $4) ON CONFLICT (kid_id, reference) DO NOTHING',
+          [
+            kidId,
+            ref,
+            String(v.text || ''),
+            v.memorizedAt ? new Date(v.memorizedAt) : new Date(),
           ]
         );
       }
