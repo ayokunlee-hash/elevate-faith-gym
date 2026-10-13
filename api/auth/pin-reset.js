@@ -1,10 +1,13 @@
 // /api/auth/pin-reset  (single function; old paths rewrite here)
-// Signed-in parents only. Three actions in one endpoint:
+// Signed-in parents only. Four actions in one endpoint:
 //   GET  ?token=...     -> validate a reset token; redirect into the app
 //                        setup page in PIN-reset mode.
 //   POST { }            -> request a reset email (throttled to one per
 //                        minute per family).
 //   POST { token, pin } -> set the new 4-digit PIN (strictly single-use).
+//   POST { pin }        -> verify the 4-digit PIN against the stored hash
+//                        (no token); used by the Parent's Corner gate so a
+//                        signed-in parent's PIN works across page reloads.
 // The previous routes /api/auth/pin-reset-request, /api/auth/pin-reset-start
 // and /api/auth/pin-reset-confirm keep working unchanged through
 // vercel.json rewrites. Only SHA-256 hashes of tokens and scrypt hashes of
@@ -13,7 +16,7 @@ const crypto = require('crypto');
 const { getPool } = require('../../lib/db');
 const { getSession } = require('../../lib/session');
 const { randomToken, sha256 } = require('../../lib/tokens');
-const { hashPin } = require('../../lib/pin');
+const { hashPin, verifyPin } = require('../../lib/pin');
 const { Resend } = require('resend');
 const { pinReset } = require('../../lib/email-templates');
 
@@ -163,6 +166,27 @@ async function handleConfirm(req, res, session, body) {
   res.status(200).json({ ok: true });
 }
 
+// POST { pin } (no token) : verify the parent PIN against the stored
+// hash for the signed-in family. Returns 200 { ok: true } on match,
+// 401 { ok: false } otherwise. The PIN itself is never logged or stored.
+async function handleVerify(req, res, session, body) {
+  const pin = String(body.pin || '');
+  if (!/^\d{4}$/.test(pin)) {
+    res.status(401).json({ ok: false });
+    return;
+  }
+  const pool = getPool();
+  const { rows } = await pool.query('SELECT pin_hash FROM families WHERE id = $1 LIMIT 1', [
+    session.family_id,
+  ]);
+  const stored = rows[0] && rows[0].pin_hash;
+  if (!stored || !verifyPin(pin, stored)) {
+    res.status(401).json({ ok: false });
+    return;
+  }
+  res.status(200).json({ ok: true });
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.method === 'GET') {
@@ -179,8 +203,12 @@ module.exports = async (req, res) => {
       return;
     }
     const body = readBody(req);
-    if (body.token) {
+    if (body.token && body.pin) {
       await handleConfirm(req, res, session, body);
+      return;
+    }
+    if (body.pin && !body.token) {
+      await handleVerify(req, res, session, body);
       return;
     }
     await handleRequest(req, res, session);
