@@ -67,7 +67,16 @@ async function loadProgress(pool, familyId) {
       })),
     });
   }
-  return { kids };
+  // Parent-set reward gifts (Parent Rewards).
+  const giftsRes = await pool.query(
+    'SELECT name, coin_price FROM parent_gifts WHERE family_id = $1 ORDER BY created_at',
+    [familyId]
+  );
+  const parentGifts = giftsRes.rows.map((r) => ({
+    name: r.name,
+    coinPrice: r.coin_price,
+  }));
+  return { kids, parentGifts };
 }
 
 async function saveProgress(pool, familyId, progress) {
@@ -76,6 +85,8 @@ async function saveProgress(pool, familyId, progress) {
     await client.query('BEGIN');
     // Remove existing progress (cascades to ledgers via kids).
     await client.query('DELETE FROM kids WHERE family_id = $1', [familyId]);
+    // Remove existing parent reward gifts.
+    await client.query('DELETE FROM parent_gifts WHERE family_id = $1', [familyId]);
 
     const kids = (progress && progress.kids) || [];
     for (const kid of kids) {
@@ -124,6 +135,17 @@ async function saveProgress(pool, familyId, progress) {
           ]
         );
       }
+    }
+    // Parent-set reward gifts (Parent Rewards).
+    const parentGifts = (progress && progress.parentGifts) || [];
+    for (const g of parentGifts) {
+      const name = String(g.name || '').trim();
+      if (!name) continue;
+      const coinPrice = Math.max(0, parseInt(g.coinPrice != null ? g.coinPrice : g.coin_price, 10) || 0);
+      await client.query(
+        'INSERT INTO parent_gifts (family_id, name, coin_price) VALUES ($1, $2, $3)',
+        [familyId, name, coinPrice]
+      );
     }
     await client.query('COMMIT');
   } catch (e) {
