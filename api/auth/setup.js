@@ -1,10 +1,13 @@
 // /api/auth/setup  (single function; old paths rewrite here)
-// Signed-in parents only. Handles two setup jobs, routed by body shape so
+// Signed-in parents only. Handles three setup jobs, routed by body shape so
 // the previous /api/auth/set-pin and /api/auth/setup-complete routes keep
 // working unchanged through vercel.json rewrites:
 //   POST { pin }             -> store the parent 4-digit PIN (scrypt hash)
 //   POST { parentName }      -> mark family setup complete (name optional)
 //   POST { pin, parentName } -> do both
+//   POST { username }        -> set the family username (one-time, for
+//                               existing families migrating to username
+//                               sign-in; new families set it at signup)
 // Until setup is marked complete, /api/auth/me reports setupCompleted:
 // false and the frontend keeps the parent on the setup page. The plain
 // PIN is never written to the database or the logs.
@@ -36,6 +39,40 @@ module.exports = async (req, res) => {
       return;
     }
     const body = readBody(req);
+
+    // Username set (one-time, for existing families migrating to username sign-in).
+    // Handled first and returns early, so it does not touch PIN or setup state.
+    if (body.username !== undefined) {
+      const username = String(body.username || '').trim().toLowerCase();
+      if (!/^[a-z0-9_]{3,20}$/.test(username)) {
+        res.status(400).json({ ok: false, error: 'invalid_username' });
+        return;
+      }
+      const pool = getPool();
+      const current = await pool.query(
+        'SELECT username FROM families WHERE id = $1 LIMIT 1',
+        [session.family_id]
+      );
+      if (current.rows.length && current.rows[0].username) {
+        res.status(409).json({ ok: false, error: 'username_already_set' });
+        return;
+      }
+      const taken = await pool.query(
+        'SELECT id FROM families WHERE LOWER(username) = $1 AND id <> $2 LIMIT 1',
+        [username, session.family_id]
+      );
+      if (taken.rows.length) {
+        res.status(409).json({ ok: false, error: 'username_taken' });
+        return;
+      }
+      await pool.query(
+        'UPDATE families SET username = $1 WHERE id = $2',
+        [username, session.family_id]
+      );
+      res.status(200).json({ ok: true, username });
+      return;
+    }
+
     const pin = body.pin !== undefined && body.pin !== null ? String(body.pin) : '';
     const wantsPin = pin !== '';
     // setup-complete behavior runs when no PIN was sent, or when the
