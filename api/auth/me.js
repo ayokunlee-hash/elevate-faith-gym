@@ -199,6 +199,32 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // Global leaderboard: returns nicknames and points for all kids who
+    // have opted in (leaderboard_nickname IS NOT NULL), ranked by lifetime
+    // points. No real names, no family info. Requires a valid session so
+    // only signed-in families can see it.
+    if ((req.query || {}).leaderboard === 'true') {
+      const { rows: leaders } = await pool.query(
+        `SELECT k.leaderboard_nickname AS nickname,
+                COALESCE(SUM(p.points_earned - p.points_spent), 0)::int AS points
+         FROM kids k
+         LEFT JOIN point_ledger p ON p.kid_id = k.id
+         WHERE k.leaderboard_nickname IS NOT NULL
+         GROUP BY k.id, k.leaderboard_nickname
+         ORDER BY points DESC, k.created_at ASC
+         LIMIT 50`
+      );
+      res.status(200).json({
+        ok: true,
+        leaderboard: leaders.map((r, i) => ({
+          rank: i + 1,
+          nickname: r.nickname,
+          points: Math.max(0, r.points || 0),
+        })),
+      });
+      return;
+    }
+
     const { rows } = await pool.query(
       'SELECT id, parent_name, email, username, auth_provider, setup_completed FROM families WHERE id = $1',
       [session.family_id]
