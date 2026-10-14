@@ -149,8 +149,13 @@ async function handleRequest(req, res, body) {
 async function handleConfirm(req, res, body) {
   const token = String(body.token || '');
   const password = String(body.password || '');
+  const confirmPassword = String(body.confirmPassword || body.confirm_password || '');
   if (!token || password.length < 8) {
     res.status(400).json({ ok: false, error: 'invalid_request' });
+    return;
+  }
+  if (confirmPassword && confirmPassword !== password) {
+    res.status(400).json({ ok: false, error: 'password_mismatch' });
     return;
   }
 

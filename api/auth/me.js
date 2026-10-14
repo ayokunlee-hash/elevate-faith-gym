@@ -200,7 +200,7 @@ module.exports = async (req, res) => {
     }
 
     const { rows } = await pool.query(
-      'SELECT id, parent_name, email, auth_provider, setup_completed FROM families WHERE id = $1',
+      'SELECT id, parent_name, email, username, auth_provider, setup_completed FROM families WHERE id = $1',
       [session.family_id]
     );
     if (!rows.length) {
@@ -215,6 +215,7 @@ module.exports = async (req, res) => {
         id: f.id,
         parentName: f.parent_name,
         email: f.email,
+        username: f.username || null,
         authProvider: f.auth_provider,
         setupCompleted: !!f.setup_completed,
       },

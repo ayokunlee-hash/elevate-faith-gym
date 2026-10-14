@@ -35,15 +35,19 @@ function isEmail(value) {
   return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
+function isUsername(value) {
+  return typeof value === 'string' && /^[a-z0-9_]{3,20}$/.test(value.trim().toLowerCase());
+}
+
 async function handleSignin(req, res) {
   const body = readBody(req);
-  const email = String(body.email || '').trim().toLowerCase();
+  const identifier = String(body.identifier || body.email || '').trim().toLowerCase();
   const password = String(body.password || '');
 
   const pool = getPool();
   const { rows } = await pool.query(
-    'SELECT id, password_hash, setup_completed FROM families WHERE email = $1 LIMIT 1',
-    [email]
+    'SELECT id, password_hash, setup_completed, username FROM families WHERE LOWER(email) = $1 OR LOWER(username) = $1 LIMIT 1',
+    [identifier]
   );
   const family = rows[0];
   const ok = family && family.password_hash && verifyPassword(password, family.password_hash);
@@ -62,10 +66,11 @@ async function handleSignin(req, res) {
 async function handleSignup(req, res) {
   const body = readBody(req);
   const email = String(body.email || '').trim().toLowerCase();
+  const username = String(body.username || '').trim().toLowerCase();
   const password = String(body.password || '');
   const parentName = String(body.parentName || '').trim();
-  if (!isEmail(email) || password.length < 8) {
-    res.status(400).json({ ok: false });
+  if (!isEmail(email) || !isUsername(username) || password.length < 8) {
+    res.status(400).json({ ok: false, error: 'invalid_input' });
     return;
   }
 
@@ -75,11 +80,19 @@ async function handleSignup(req, res) {
     res.status(409).json({ ok: false, error: 'email_taken' });
     return;
   }
+  const existingUser = await pool.query(
+    'SELECT id FROM families WHERE LOWER(username) = $1 LIMIT 1',
+    [username]
+  );
+  if (existingUser.rows.length) {
+    res.status(409).json({ ok: false, error: 'username_taken' });
+    return;
+  }
 
   const passwordHash = hashPassword(password); // throws unless 8+ chars
   const { rows } = await pool.query(
-    "INSERT INTO families (email, auth_provider, parent_name, password_hash) VALUES ($1, 'email', $2, $3) RETURNING id, setup_completed",
-    [email, parentName, passwordHash]
+    "INSERT INTO families (email, username, auth_provider, parent_name, password_hash) VALUES ($1, $2, 'email', $3, $4) RETURNING id, setup_completed",
+    [email, username, parentName, passwordHash]
   );
   const family = rows[0];
 
