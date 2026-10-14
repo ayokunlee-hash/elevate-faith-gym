@@ -84,7 +84,7 @@ async function handleRequest(req, res, body) {
   }
   const pool = getPool();
   const fam = await pool.query(
-    'SELECT id FROM families WHERE email = $1 AND password_hash IS NOT NULL LIMIT 1',
+    'SELECT id FROM families WHERE email = $1 LIMIT 1',
     [email]
   );
   if (!fam.rows.length) {
@@ -119,6 +119,7 @@ async function handleRequest(req, res, body) {
         to: email,
         subject: tpl.subject,
         html: tpl.html,
+        text: tpl.text,
       });
       accepted = !!(result && !result.error && result.data);
     } catch (sendErr) {
