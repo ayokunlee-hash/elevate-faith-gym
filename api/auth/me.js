@@ -37,7 +37,7 @@ async function loadProgress(pool, familyId) {
       [k.id]
     );
     const actRes = await pool.query(
-      'SELECT series, week, day, activity_type, minutes_or_value, completed_at FROM activity_log WHERE kid_id = $1 ORDER BY completed_at',
+      'SELECT series, week, day, activity_type, minutes_or_value, completed_at, note FROM activity_log WHERE kid_id = $1 ORDER BY completed_at',
       [k.id]
     );
     const vaultRes = await pool.query(
@@ -68,6 +68,7 @@ async function loadProgress(pool, familyId) {
         activityType: r.activity_type,
         minutesOrValue: r.minutes_or_value,
         completedAt: r.completed_at,
+        note: r.note,
       })),
       verseVault: vaultRes.rows.map((r) => ({
         reference: r.reference,
@@ -132,7 +133,7 @@ async function saveProgress(pool, familyId, progress) {
       }
       for (const a of kid.activities || []) {
         await client.query(
-          'INSERT INTO activity_log (kid_id, series, week, day, activity_type, minutes_or_value, completed_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          'INSERT INTO activity_log (kid_id, series, week, day, activity_type, minutes_or_value, completed_at, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
           [
             kidId,
             a.series || null,
@@ -141,6 +142,7 @@ async function saveProgress(pool, familyId, progress) {
             String(a.activityType || ''),
             a.minutesOrValue != null ? parseInt(a.minutesOrValue, 10) : null,
             a.completedAt ? new Date(a.completedAt) : new Date(),
+            a.note != null ? String(a.note) : null,
           ]
         );
       }
